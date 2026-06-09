@@ -41,6 +41,42 @@ const PRESETS: Record<string, Preset> = {
       smoothing: 0.6,
     },
   },
+  'nebula': {
+    id: 'nebula',
+    name: 'Nebula',
+    isPublic: true,
+    config: {
+      colors: ['#5E60CE', '#FF2D75', '#00F5FF', '#FFE66D'],
+      sensitivity: { bass: 0.6, mid: 0.7, treble: 0.5 },
+      particleCount: 100,
+      waveformStyle: 'nebula',
+      smoothing: 0.75,
+    },
+  },
+  'oscilloscope': {
+    id: 'oscilloscope',
+    name: 'Scope',
+    isPublic: true,
+    config: {
+      colors: ['#00F5FF', '#FF2D75', '#FFE66D', '#5E60CE'],
+      sensitivity: { bass: 0.5, mid: 0.8, treble: 0.6 },
+      particleCount: 0,
+      waveformStyle: 'oscilloscope',
+      smoothing: 0.6,
+    },
+  },
+  'vinyl': {
+    id: 'vinyl',
+    name: 'Vinyl',
+    isPublic: true,
+    config: {
+      colors: ['#FF2D75', '#FFE66D', '#00F5FF', '#5E60CE'],
+      sensitivity: { bass: 0.8, mid: 0.6, treble: 0.5 },
+      particleCount: 0,
+      waveformStyle: 'vinyl',
+      smoothing: 0.85,
+    },
+  },
   'edm': {
     id: 'edm',
     name: 'EDM',
@@ -71,6 +107,7 @@ interface AppState extends VisualizationState {
   setDuration: (dur: number) => void;
   setCurrentTime: (time: number) => void;
   setError: (err: string | null) => void;
+  setVinylLabelImage: (img: string | null) => void;
   reset: () => void;
   getAvailablePresets: () => Preset[];
 }
@@ -91,23 +128,16 @@ export const useStore = create<AppState>((set, get) => ({
   duration: 0,
   currentTime: 0,
   error: null,
+  vinylLabelImage: null,
 
   setSource: (type, url) => set({ sourceType: type, sourceUrl: url }),
-
   setAudioState: (audioState) => set({ audioState }),
-
   setAudioContext: (audioContext) => set({ audioContext }),
-
   setAnalyserNode: (analyserNode) => set({ analyserNode }),
-
   setFrequencyData: (frequencyData) => set({ frequencyData }),
-
   setTimeDomainData: (timeDomainData) => set({ timeDomainData }),
-
   setBpm: (bpm) => set({ bpm }),
-
   setSpectralProfile: (spectralProfile) => set({ spectralProfile }),
-
   setCurrentPreset: (preset) => set({ currentPreset: preset }),
 
   updatePresetConfig: (partial) => {
@@ -121,14 +151,11 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   setIsPlaying: (isPlaying) => set({ isPlaying }),
-
   setVolume: (volume) => set({ volume }),
-
   setDuration: (duration) => set({ duration }),
-
   setCurrentTime: (currentTime) => set({ currentTime }),
-
   setError: (error) => set({ error }),
+  setVinylLabelImage: (vinylLabelImage) => set({ vinylLabelImage }),
 
   reset: () =>
     set({
@@ -147,6 +174,7 @@ export const useStore = create<AppState>((set, get) => ({
       duration: 0,
       currentTime: 0,
       error: null,
+      vinylLabelImage: null,
     }),
 
   getAvailablePresets: () => Object.values(PRESETS),

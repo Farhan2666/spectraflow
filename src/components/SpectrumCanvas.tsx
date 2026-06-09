@@ -6,7 +6,8 @@ import { motion } from 'framer-motion';
 
 export function SpectrumCanvas() {
   const { canvasRef } = useVisualizer();
-  const { audioState, currentPreset, frequencyData } = useStore();
+  const audioState = useStore((state) => state.audioState);
+  const currentPreset = useStore((state) => state.currentPreset);
 
   return (
     <div className="relative w-full h-full min-h-[400px] rounded-2xl overflow-hidden bg-[#0F0F12] border border-[#2A2A3E]">
@@ -51,19 +52,28 @@ export function SpectrumCanvas() {
       )}
 
       {audioState === 'ready' && (
-        <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between px-2">
+        <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between px-2 select-none pointer-events-none">
           <div className="flex items-center gap-2">
-            <div className="flex gap-0.5">
-              {Array.from({ length: 5 }).map((_, i) => {
-                const val = frequencyData[i * 25] || 0;
-                return (
-                  <div
-                    key={i}
-                    className="w-0.5 bg-[#00F5FF] rounded-full transition-all duration-75"
-                    style={{ height: `${(val / 255) * 20}px`, opacity: 0.6 }}
-                  />
-                );
-              })}
+            <div className="flex gap-0.5 items-end h-3">
+              <style>{`
+                @keyframes miniVisualizerBounce {
+                  0% { transform: scaleY(0.3); }
+                  100% { transform: scaleY(1); }
+                }
+              `}</style>
+              {[0.6, 0.9, 0.4, 0.8, 0.5].map((speed, i) => (
+                <div
+                  key={i}
+                  className="w-0.5 bg-[#00F5FF] rounded-full origin-bottom"
+                  style={{
+                    height: '100%',
+                    width: '2px',
+                    opacity: 0.7,
+                    animation: `miniVisualizerBounce ${0.4 + speed * 0.4}s ease-in-out infinite alternate`,
+                    animationDelay: `${i * 0.1}s`,
+                  }}
+                />
+              ))}
             </div>
             <span className="text-[10px] text-[#9090A8] font-mono">
               {currentPreset.config.waveformStyle}

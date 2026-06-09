@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { createContext, useContext, useRef, useCallback, useEffect, ReactNode } from 'react';
 import { useStore } from '@/store/useStore';
@@ -15,6 +15,7 @@ import {
 interface AudioEngineContextValue {
   processYouTubeLink: (url: string) => Promise<void>;
   processFileUpload: (file: File) => Promise<void>;
+  processDataUrl: (dataUrl: string, name: string) => Promise<void>;
   togglePlayPause: () => void;
   seekTo: (time: number) => void;
   setVolume: (vol: number) => void;
@@ -23,135 +24,267 @@ interface AudioEngineContextValue {
 const AudioEngineContext = createContext<AudioEngineContextValue | null>(null);
 
 export function AudioProvider({ children }: { children: ReactNode }) {
-  const store = useStore();
   const animationRef = useRef<number | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
 
   const initContext = useCallback(() => {
-    if (!store.audioContext) {
+    const currentState = useStore.getState();
+    if (!currentState.audioContext) {
       const ctx = createAudioContext();
       const analyser = createAnalyserNode(ctx);
-      store.setAudioContext(ctx);
-      store.setAnalyserNode(analyser);
+      currentState.setAudioContext(ctx);
+      currentState.setAnalyserNode(analyser);
     }
-  }, [store]);
+  }, []);
 
   const startAnalyzing = useCallback(() => {
-    const analyser = store.analyserNode;
-    if (!analyser) return;
-
     const analyze = () => {
-      const freqData = getFrequencyData(analyser);
-      const timeData = getTimeDomainData(analyser);
+      const liveState = useStore.getState();
+      const liveAnalyser = liveState.analyserNode;
+      if (!liveAnalyser) return;
 
-      store.setFrequencyData(freqData);
-      store.setTimeDomainData(timeData);
+      const freqData = getFrequencyData(liveAnalyser);
+      const timeData = getTimeDomainData(liveAnalyser);
+
+      liveState.setFrequencyData(freqData);
+      liveState.setTimeDomainData(timeData);
 
       const profile = analyzeSpectrum(freqData);
-      store.setSpectralProfile(profile);
+      liveState.setSpectralProfile(profile);
 
-      if (store.audioContext?.sampleRate) {
-        const bpm = detectBpm(timeData, store.audioContext.sampleRate);
-        store.setBpm(bpm);
+      if (liveState.audioContext?.sampleRate) {
+        const bpm = detectBpm(timeData, liveState.audioContext.sampleRate);
+        liveState.setBpm(bpm);
       }
 
       if (audioElementRef.current) {
-        store.setCurrentTime(audioElementRef.current.currentTime);
+        liveState.setCurrentTime(audioElementRef.current.currentTime);
       }
 
       animationRef.current = requestAnimationFrame(analyze);
     };
 
     animationRef.current = requestAnimationFrame(analyze);
-  }, [store]);
+  }, []);
 
-  const processYouTubeLink = useCallback(async (url: string) => {
+  const processYouTubeLink = useCallback((url: string) => {
+    const currentState = useStore.getState();
     if (!validateYouTubeUrl(url)) {
-      store.setError('Invalid YouTube link. Please check and try again.');
-      return;
+      currentState.setError('Invalid YouTube link. Please check and try again.');
+      return Promise.reject(new Error('Invalid URL'));
     }
 
-    store.setSource('youtube', url);
-    store.setAudioState('processing');
-
-    try {
-      const audioUrl = `/api/proxy-audio?url=${encodeURIComponent(url)}`;
-      initContext();
-
-      const audio = new Audio(audioUrl);
-      audioElementRef.current = audio;
-      audio.crossOrigin = 'anonymous';
-
-      audio.oncanplaythrough = () => {
-        if (store.audioContext && store.analyserNode) {
-          const source = store.audioContext.createMediaElementSource(audio);
-          source.connect(store.analyserNode);
-          store.analyserNode.connect(store.audioContext.destination);
-          store.audioContext.resume();
-          audio.play();
-          store.setIsPlaying(true);
-          store.setDuration(audio.duration);
-          store.setAudioState('ready');
-          startAnalyzing();
-        }
-      };
-
-      audio.onerror = () => {
-        store.setAudioState('error');
-        store.setError('Failed to load audio. Try uploading the file instead.');
-      };
-    } catch {
-      store.setAudioState('error');
-      store.setError('Audio processing failed. Switch to audio upload.');
+    // Explicitly pause and clean up previous audio to prevent double playback
+    if (audioElementRef.current) {
+      try {
+        audioElementRef.current.pause();
+        audioElementRef.current.src = '';
+      } catch (err) {
+        console.error('Error cleaning up previous audio:', err);
+      }
+      audioElementRef.current = null;
     }
-  }, [initContext, startAnalyzing, store]);
 
-  const processFileUpload = useCallback(async (file: File) => {
-    store.setSource('upload', file.name);
-    store.setAudioState('processing');
+    currentState.setSource('youtube', url);
+    currentState.setAudioState('processing');
 
-    try {
-      const url = URL.createObjectURL(file);
-      initContext();
+    return new Promise<void>((resolve, reject) => {
+      try {
+        const audioUrl = `/api/proxy-audio?url=${encodeURIComponent(url)}`;
+        initContext();
 
-      const audio = new Audio(url);
-      audioElementRef.current = audio;
-      audio.crossOrigin = 'anonymous';
+        const audio = new Audio(audioUrl);
+        audioElementRef.current = audio;
+        audio.crossOrigin = 'anonymous';
 
-      audio.oncanplaythrough = () => {
-        if (store.audioContext && store.analyserNode) {
-          const source = store.audioContext.createMediaElementSource(audio);
-          source.connect(store.analyserNode);
-          store.analyserNode.connect(store.audioContext.destination);
-          store.audioContext.resume();
-          audio.play();
-          store.setIsPlaying(true);
-          store.setDuration(audio.duration);
-          store.setAudioState('ready');
-          startAnalyzing();
-        }
-      };
+        audio.oncanplaythrough = () => {
+          const liveState = useStore.getState();
+          const liveCtx = liveState.audioContext;
+          const liveAnalyser = liveState.analyserNode;
 
-      audio.onerror = () => {
-        store.setAudioState('error');
-        store.setError('Failed to process audio file.');
-      };
-    } catch {
-      store.setAudioState('error');
-      store.setError('Audio format not supported.');
+          if (liveCtx && liveAnalyser) {
+            try {
+              const source = liveCtx.createMediaElementSource(audio);
+              source.connect(liveAnalyser);
+              liveAnalyser.connect(liveCtx.destination);
+              liveCtx.resume();
+              audio.play();
+              liveState.setIsPlaying(true);
+              liveState.setDuration(audio.duration);
+              liveState.setAudioState('ready');
+              startAnalyzing();
+              resolve();
+            } catch (e: any) {
+              liveState.setAudioState('error');
+              liveState.setError('Failed to configure audio context.');
+              reject(e);
+            }
+          } else {
+            resolve();
+          }
+        };
+
+        audio.onerror = () => {
+          const liveState = useStore.getState();
+          liveState.setAudioState('error');
+          liveState.setError('Failed to load audio. Try uploading the file instead.');
+          reject(new Error('Audio load error'));
+        };
+      } catch (e: any) {
+        const liveState = useStore.getState();
+        liveState.setAudioState('error');
+        liveState.setError('Audio processing failed. Switch to audio upload.');
+        reject(e);
+      }
+    });
+  }, [initContext, startAnalyzing]);
+
+  const processFileUpload = useCallback((file: File) => {
+    const currentState = useStore.getState();
+
+    // Explicitly pause and clean up previous audio to prevent double playback
+    if (audioElementRef.current) {
+      try {
+        audioElementRef.current.pause();
+        audioElementRef.current.src = '';
+      } catch (err) {
+        console.error('Error cleaning up previous audio:', err);
+      }
+      audioElementRef.current = null;
     }
-  }, [initContext, startAnalyzing, store]);
+
+    currentState.setSource('upload', file.name);
+    currentState.setAudioState('processing');
+
+    return new Promise<void>((resolve, reject) => {
+      try {
+        const url = URL.createObjectURL(file);
+        initContext();
+
+        const audio = new Audio(url);
+        audioElementRef.current = audio;
+        audio.crossOrigin = 'anonymous';
+
+        audio.oncanplaythrough = () => {
+          const liveState = useStore.getState();
+          const liveCtx = liveState.audioContext;
+          const liveAnalyser = liveState.analyserNode;
+
+          if (liveCtx && liveAnalyser) {
+            try {
+              const source = liveCtx.createMediaElementSource(audio);
+              source.connect(liveAnalyser);
+              liveAnalyser.connect(liveCtx.destination);
+              liveCtx.resume();
+              audio.play();
+              liveState.setIsPlaying(true);
+              liveState.setDuration(audio.duration);
+              liveState.setAudioState('ready');
+              startAnalyzing();
+              resolve();
+            } catch (e: any) {
+              liveState.setAudioState('error');
+              liveState.setError('Failed to configure audio context.');
+              reject(e);
+            }
+          } else {
+            resolve();
+          }
+        };
+
+        audio.onerror = () => {
+          const liveState = useStore.getState();
+          liveState.setAudioState('error');
+          liveState.setError('Failed to process audio file.');
+          reject(new Error('Audio process error'));
+        };
+      } catch (e: any) {
+        const liveState = useStore.getState();
+        liveState.setAudioState('error');
+        liveState.setError('Audio format not supported.');
+        reject(e);
+      }
+    });
+  }, [initContext, startAnalyzing]);
+
+  const processDataUrl = useCallback((dataUrl: string, name: string) => {
+    const currentState = useStore.getState();
+
+    // Explicitly pause and clean up previous audio to prevent double playback
+    if (audioElementRef.current) {
+      try {
+        audioElementRef.current.pause();
+        audioElementRef.current.src = '';
+      } catch (err) {
+        console.error('Error cleaning up previous audio:', err);
+      }
+      audioElementRef.current = null;
+    }
+
+    currentState.setSource('upload', name);
+    currentState.setAudioState('processing');
+
+    return new Promise<void>((resolve, reject) => {
+      try {
+        initContext();
+
+        const audio = new Audio(dataUrl);
+        audioElementRef.current = audio;
+        audio.crossOrigin = 'anonymous';
+
+        audio.oncanplaythrough = () => {
+          const liveState = useStore.getState();
+          const liveCtx = liveState.audioContext;
+          const liveAnalyser = liveState.analyserNode;
+
+          if (liveCtx && liveAnalyser) {
+            try {
+              const source = liveCtx.createMediaElementSource(audio);
+              source.connect(liveAnalyser);
+              liveAnalyser.connect(liveCtx.destination);
+              liveCtx.resume();
+              audio.play();
+              liveState.setIsPlaying(true);
+              liveState.setDuration(audio.duration);
+              liveState.setAudioState('ready');
+              startAnalyzing();
+              resolve();
+            } catch (e: any) {
+              liveState.setAudioState('error');
+              liveState.setError('Failed to configure audio context.');
+              reject(e);
+            }
+          } else {
+            resolve();
+          }
+        };
+
+        audio.onerror = () => {
+          const liveState = useStore.getState();
+          liveState.setAudioState('error');
+          liveState.setError('Failed to process audio file.');
+          reject(new Error('Audio process error'));
+        };
+      } catch (e: any) {
+        const liveState = useStore.getState();
+        liveState.setAudioState('error');
+        liveState.setError('Audio format not supported.');
+        reject(e);
+      }
+    });
+  }, [initContext, startAnalyzing]);
 
   const togglePlayPause = useCallback(() => {
+    const liveState = useStore.getState();
     if (audioElementRef.current) {
-      if (store.isPlaying) {
+      if (liveState.isPlaying) {
         audioElementRef.current.pause();
       } else {
         audioElementRef.current.play();
       }
-      store.setIsPlaying(!store.isPlaying);
+      liveState.setIsPlaying(!liveState.isPlaying);
     }
-  }, [store]);
+  }, []);
 
   const seekTo = useCallback((time: number) => {
     if (audioElementRef.current) {
@@ -160,11 +293,12 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setVolume = useCallback((vol: number) => {
+    const liveState = useStore.getState();
     if (audioElementRef.current) {
       audioElementRef.current.volume = vol;
     }
-    store.setVolume(vol);
-  }, [store]);
+    liveState.setVolume(vol);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -180,7 +314,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
 
   return (
     <AudioEngineContext.Provider
-      value={{ processYouTubeLink, processFileUpload, togglePlayPause, seekTo, setVolume }}
+      value={{ processYouTubeLink, processFileUpload, processDataUrl, togglePlayPause, seekTo, setVolume }}
     >
       {children}
     </AudioEngineContext.Provider>

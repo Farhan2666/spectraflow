@@ -26,7 +26,7 @@ export interface PresetConfig {
     treble: number;
   };
   particleCount: number;
-  waveformStyle: 'bars' | 'wave' | 'circular' | 'particle';
+  waveformStyle: 'bars' | 'bars-reflective' | 'wave' | 'glow-wave' | 'circular' | 'particles' | 'nebula' | 'oscilloscope' | 'vinyl';
   smoothing: number;
 }
 
@@ -72,4 +72,5 @@ export interface VisualizationState {
   duration: number;
   currentTime: number;
   error: string | null;
+  vinylLabelImage: string | null;
 }

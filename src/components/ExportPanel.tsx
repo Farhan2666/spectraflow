@@ -3,8 +3,9 @@
 import { useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
-import { exportVisualization, getExportConfig, generateEmbedCode, downloadAsFile } from '@/lib/export';
+import { getExportConfig, generateEmbedCode } from '@/lib/export';
 import { useStore } from '@/store/useStore';
+import { useAudioEngine } from '@/hooks/useAudioEngine';
 import type { ExportFormat, ExportPlatform } from '@/types';
 
 const PLATFORMS: { id: ExportPlatform; label: string; icon: string }[] = [
@@ -22,26 +23,139 @@ const FORMATS: { id: ExportFormat; label: string }[] = [
 
 export function ExportPanel() {
   const { audioState } = useStore();
+  const { togglePlayPause } = useAudioEngine();
   const [selectedPlatform, setSelectedPlatform] = useState<ExportPlatform>('instagram');
   const [selectedFormat, setSelectedFormat] = useState<ExportFormat>('mp4');
   const [duration, setDuration] = useState(15);
   const [isExporting, setIsExporting] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [embedCode, setEmbedCode] = useState<string | null>(null);
 
   const handleExport = useCallback(async () => {
-    setIsExporting(true);
-    try {
-      const result = await exportVisualization('demo-job', selectedFormat, duration);
-      if (selectedFormat === 'embed') {
-        setEmbedCode(generateEmbedCode('demo-job'));
-      } else {
-        downloadAsFile(result.downloadUrl, `spectraflow-visualization.${selectedFormat}`);
-      }
-    } catch (err) {
-      console.error('Export failed:', err);
+    if (selectedFormat === 'embed') {
+      setEmbedCode(generateEmbedCode('demo-job'));
+      return;
     }
-    setIsExporting(false);
-  }, [selectedFormat, duration]);
+
+    const canvas = document.querySelector('canvas');
+    if (!canvas) {
+      alert('Visualizer canvas not found!');
+      return;
+    }
+
+    const storeState = useStore.getState();
+    const ctx = storeState.audioContext;
+    const analyser = storeState.analyserNode;
+    if (!ctx || !analyser) {
+      alert('Audio context not ready! Please play audio first.');
+      return;
+    }
+
+    setIsExporting(true);
+    setProgress(0);
+
+    let audioStreamNode: MediaStreamAudioDestinationNode | null = null;
+    const chunks: Blob[] = [];
+
+    try {
+      // 1. Tap audio output WITHOUT disturbing existing connections
+      audioStreamNode = ctx.createMediaStreamDestination();
+      analyser.connect(audioStreamNode);
+
+      // 2. Capture canvas stream at 30 FPS
+      const canvasStream = (canvas as any).captureStream(30) as MediaStream;
+      if (!canvasStream) {
+        throw new Error('Canvas captureStream not supported in this browser.');
+      }
+
+      // 3. Combine canvas video + tapped audio
+      const combinedStream = new MediaStream();
+      canvasStream.getVideoTracks().forEach(t => combinedStream.addTrack(t));
+      audioStreamNode.stream.getAudioTracks().forEach(t => combinedStream.addTrack(t));
+
+      // 4. Pick best supported mimeType — WEBM only (mp4 not reliable in Chrome)
+      const webmTypes = [
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm',
+      ];
+      const mimeType = webmTypes.find(t => MediaRecorder.isTypeSupported(t)) || '';
+      if (!mimeType) {
+        throw new Error('No supported video format found. Please use Chrome or Edge.');
+      }
+      console.log('[SpectraFlow Export] Using mimeType:', mimeType);
+
+      // 5. Start recording (from current position — no seeking/restarting)
+      const recorder = new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 4_000_000 });
+      recorder.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
+
+      // Make sure audio is playing before recording
+      const wasPlaying = storeState.isPlaying;
+      if (!wasPlaying) {
+        togglePlayPause();
+        await new Promise(r => setTimeout(r, 200));
+      }
+
+      recorder.start(250); // collect data every 250ms
+
+      // 6. Progress tracking + auto-stop after duration
+      const startTime = Date.now();
+      const exportDurationMs = duration * 1000;
+
+      await new Promise<void>((resolve) => {
+        const tick = setInterval(() => {
+          const elapsed = Date.now() - startTime;
+          const pct = Math.min(Math.round((elapsed / exportDurationMs) * 100), 99);
+          setProgress(pct);
+
+          if (elapsed >= exportDurationMs) {
+            clearInterval(tick);
+            recorder.stop();
+            resolve();
+          }
+        }, 100);
+      });
+
+      // 7. Wait for final data
+      await new Promise<void>((resolve) => {
+        recorder.onstop = () => resolve();
+      });
+
+      // 8. Restore audio state
+      if (!wasPlaying) {
+        togglePlayPause();
+      }
+
+      // 9. Disconnect tap node (doesn't affect main graph)
+      try { analyser.disconnect(audioStreamNode); } catch {}
+
+      // 10. Download the recorded blob
+      const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+      const blob = new Blob(chunks, { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `spectraflow-visualization.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+      setProgress(100);
+      setTimeout(() => {
+        setIsExporting(false);
+        setProgress(0);
+      }, 800);
+
+    } catch (err: any) {
+      console.error('[SpectraFlow Export] Failed:', err);
+      alert('Export failed: ' + (err?.message || String(err)));
+      try { if (audioStreamNode && analyser) analyser.disconnect(audioStreamNode); } catch {}
+      setIsExporting(false);
+      setProgress(0);
+    }
+  }, [selectedFormat, duration, togglePlayPause]);
+
 
   if (audioState !== 'ready') return null;
 
@@ -141,30 +255,47 @@ export function ExportPanel() {
           </motion.button>
         </div>
       ) : (
-        <motion.button
-          whileHover={{ scale: 1.01 }}
-          whileTap={{ scale: 0.99 }}
-          onClick={handleExport}
-          disabled={isExporting}
-          className={cn(
-            'w-full py-2.5 rounded-xl text-sm font-medium transition-all duration-200',
-            isExporting
-              ? 'bg-[#2A2A3E] text-[#9090A8]'
-              : 'bg-gradient-to-r from-[#5E60CE] to-[#FF2D75] text-white shadow-lg shadow-[#5E60CE]/30'
+        <div className="space-y-2">
+          <motion.button
+            whileHover={isExporting ? {} : { scale: 1.01 }}
+            whileTap={isExporting ? {} : { scale: 0.99 }}
+            onClick={handleExport}
+            disabled={isExporting}
+            className={cn(
+              'w-full py-2.5 rounded-xl text-sm font-medium transition-all duration-200',
+              isExporting
+                ? 'bg-[#2A2A3E] text-[#9090A8] cursor-not-allowed'
+                : 'bg-gradient-to-r from-[#5E60CE] to-[#FF2D75] text-white shadow-lg shadow-[#5E60CE]/30'
+            )}
+          >
+            {isExporting ? (
+              <span className="flex items-center justify-center gap-2">
+                <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Recording... {progress}%
+              </span>
+            ) : (
+              `Download ${selectedFormat === 'mp4' ? 'Video' : selectedFormat.toUpperCase()}`
+            )}
+          </motion.button>
+          {isExporting && (
+            <div className="relative h-1 rounded-full bg-[#2A2A3E] overflow-hidden">
+              <motion.div
+                className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#5E60CE] to-[#00F5FF]"
+                initial={{ width: '0%' }}
+                animate={{ width: `${progress}%` }}
+                transition={{ duration: 0.1 }}
+              />
+            </div>
           )}
-        >
-          {isExporting ? (
-            <span className="flex items-center justify-center gap-2">
-              <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-              Exporting...
-            </span>
-          ) : (
-            `Download ${selectedFormat.toUpperCase()}`
+          {isExporting && (
+            <p className="text-[10px] font-mono text-[#9090A8] text-center">
+              🎬 Recording your visualizer... audio is playing
+            </p>
           )}
-        </motion.button>
+        </div>
       )}
     </div>
   );

@@ -1,6 +1,6 @@
-'use client';
+﻿'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { SpectrumCanvas } from './SpectrumCanvas';
 import { ControlPanel } from './ControlPanel';
 import { PresetSelector } from './PresetSelector';
@@ -11,7 +11,7 @@ import { useStore } from '@/store/useStore';
 import { cn } from '@/lib/utils';
 
 export function AudioVisualizer() {
-  const { processYouTubeLink, processFileUpload } = useAudioEngine();
+  const { processYouTubeLink, processFileUpload, processDataUrl } = useAudioEngine();
   const { audioState, sourceUrl, sourceType, bpm, reset } = useStore();
   const [progress, setProgress] = useState(0);
   const [showSidebar, setShowSidebar] = useState(true);
@@ -37,6 +37,32 @@ export function AudioVisualizer() {
     setProgress(100);
     setTimeout(() => setProgress(0), 500);
   }, [processFileUpload]);
+
+  useEffect(() => {
+    if (audioState === 'idle') {
+      const stored = sessionStorage.getItem('spectraflow-source');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (parsed.type === 'youtube' && parsed.url) {
+            handleYouTubeSubmit(parsed.url);
+          } else if (parsed.type === 'upload' && parsed.dataUrl) {
+            setProgress(0);
+            const interval = setInterval(() => {
+              setProgress((p) => Math.min(p + Math.random() * 20, 85));
+            }, 200);
+            processDataUrl(parsed.dataUrl, parsed.name || 'Uploaded Audio').then(() => {
+              clearInterval(interval);
+              setProgress(100);
+              setTimeout(() => setProgress(0), 500);
+            });
+          }
+        } catch (e) {
+          console.error('Failed to load stored audio source', e);
+        }
+      }
+    }
+  }, [audioState, handleYouTubeSubmit, processDataUrl]);
 
   return (
     <div className="flex flex-col min-h-screen bg-[#0F0F12]">
@@ -76,6 +102,7 @@ export function AudioVisualizer() {
           )}
           <a
             href="/"
+            onClick={() => reset()}
             className="px-3 py-1.5 rounded-lg text-xs font-mono border border-[#2A2A3E] text-[#9090A8] hover:border-[#3A3A5E] transition-all"
           >
             New Project
