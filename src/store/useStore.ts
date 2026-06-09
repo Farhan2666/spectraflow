@@ -1,0 +1,153 @@
+'use client';
+
+import { create } from 'zustand';
+import type { VisualizationState, Preset, PresetConfig, SpectralProfile, AudioState } from '@/types';
+
+const DEFAULT_PRESET: Preset = {
+  id: 'bass-heavy',
+  name: 'Bass Heavy',
+  isPublic: true,
+  config: {
+    colors: ['#5E60CE', '#FF2D75', '#00F5FF', '#E0E0E0'],
+    sensitivity: { bass: 1.0, mid: 0.5, treble: 0.3 },
+    particleCount: 100,
+    waveformStyle: 'bars',
+    smoothing: 0.8,
+  },
+};
+
+const PRESETS: Record<string, Preset> = {
+  'bass-heavy': {
+    id: 'bass-heavy',
+    name: 'Bass Heavy',
+    isPublic: true,
+    config: {
+      colors: ['#5E60CE', '#FF2D75', '#00F5FF', '#E0E0E0'],
+      sensitivity: { bass: 1.0, mid: 0.5, treble: 0.3 },
+      particleCount: 80,
+      waveformStyle: 'bars',
+      smoothing: 0.8,
+    },
+  },
+  'vocal-focused': {
+    id: 'vocal-focused',
+    name: 'Vocal Focused',
+    isPublic: true,
+    config: {
+      colors: ['#FF6B6B', '#FECA57', '#48DBFB', '#E0E0E0'],
+      sensitivity: { bass: 0.3, mid: 1.0, treble: 0.7 },
+      particleCount: 60,
+      waveformStyle: 'wave',
+      smoothing: 0.6,
+    },
+  },
+  'edm': {
+    id: 'edm',
+    name: 'EDM',
+    isPublic: true,
+    config: {
+      colors: ['#00F5FF', '#FF2D75', '#FFE66D', '#5E60CE'],
+      sensitivity: { bass: 0.7, mid: 0.6, treble: 1.0 },
+      particleCount: 150,
+      waveformStyle: 'circular',
+      smoothing: 0.5,
+    },
+  },
+};
+
+interface AppState extends VisualizationState {
+  setSource: (type: 'youtube' | 'upload', url: string | null) => void;
+  setAudioState: (state: AudioState) => void;
+  setAudioContext: (ctx: AudioContext | null) => void;
+  setAnalyserNode: (node: AnalyserNode | null) => void;
+  setFrequencyData: (data: Uint8Array) => void;
+  setTimeDomainData: (data: Uint8Array) => void;
+  setBpm: (bpm: number | null) => void;
+  setSpectralProfile: (profile: SpectralProfile | null) => void;
+  setCurrentPreset: (preset: Preset) => void;
+  updatePresetConfig: (config: Partial<PresetConfig>) => void;
+  setIsPlaying: (playing: boolean) => void;
+  setVolume: (vol: number) => void;
+  setDuration: (dur: number) => void;
+  setCurrentTime: (time: number) => void;
+  setError: (err: string | null) => void;
+  reset: () => void;
+  getAvailablePresets: () => Preset[];
+}
+
+export const useStore = create<AppState>((set, get) => ({
+  audioState: 'idle',
+  sourceType: null,
+  sourceUrl: null,
+  audioContext: null,
+  analyserNode: null,
+  frequencyData: new Uint8Array(128),
+  timeDomainData: new Uint8Array(128),
+  bpm: null,
+  spectralProfile: null,
+  currentPreset: DEFAULT_PRESET,
+  isPlaying: false,
+  volume: 0.7,
+  duration: 0,
+  currentTime: 0,
+  error: null,
+
+  setSource: (type, url) => set({ sourceType: type, sourceUrl: url }),
+
+  setAudioState: (audioState) => set({ audioState }),
+
+  setAudioContext: (audioContext) => set({ audioContext }),
+
+  setAnalyserNode: (analyserNode) => set({ analyserNode }),
+
+  setFrequencyData: (frequencyData) => set({ frequencyData }),
+
+  setTimeDomainData: (timeDomainData) => set({ timeDomainData }),
+
+  setBpm: (bpm) => set({ bpm }),
+
+  setSpectralProfile: (spectralProfile) => set({ spectralProfile }),
+
+  setCurrentPreset: (preset) => set({ currentPreset: preset }),
+
+  updatePresetConfig: (partial) => {
+    const current = get().currentPreset;
+    set({
+      currentPreset: {
+        ...current,
+        config: { ...current.config, ...partial },
+      },
+    });
+  },
+
+  setIsPlaying: (isPlaying) => set({ isPlaying }),
+
+  setVolume: (volume) => set({ volume }),
+
+  setDuration: (duration) => set({ duration }),
+
+  setCurrentTime: (currentTime) => set({ currentTime }),
+
+  setError: (error) => set({ error }),
+
+  reset: () =>
+    set({
+      audioState: 'idle',
+      sourceType: null,
+      sourceUrl: null,
+      audioContext: null,
+      analyserNode: null,
+      frequencyData: new Uint8Array(128),
+      timeDomainData: new Uint8Array(128),
+      bpm: null,
+      spectralProfile: null,
+      currentPreset: DEFAULT_PRESET,
+      isPlaying: false,
+      volume: 0.7,
+      duration: 0,
+      currentTime: 0,
+      error: null,
+    }),
+
+  getAvailablePresets: () => Object.values(PRESETS),
+}));
