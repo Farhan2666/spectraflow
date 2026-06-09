@@ -21,10 +21,10 @@ export async function exportVisualization(
 
 export function getExportConfig(platform: ExportPlatform): { width: number; height: number; label: string } {
   const configs: Record<ExportPlatform, { width: number; height: number; label: string }> = {
-    instagram: { width: 1080, height: 1920, label: 'IG Reel (9:16)' },
-    tiktok: { width: 1080, height: 1920, label: 'TikTok (9:16)' },
-    twitter: { width: 1080, height: 1080, label: 'Twitter/X (1:1)' },
-    youtube: { width: 1920, height: 1080, label: 'YouTube (16:9)' },
+    instagram: { width: 720, height: 1280, label: 'IG Reel (720x1280)' },
+    tiktok: { width: 720, height: 1280, label: 'TikTok (720x1280)' },
+    twitter: { width: 720, height: 720, label: 'Twitter/X (720x720)' },
+    youtube: { width: 1280, height: 720, label: 'YouTube (720p)' },
   };
   return configs[platform];
 }

@@ -108,6 +108,11 @@ interface AppState extends VisualizationState {
   setCurrentTime: (time: number) => void;
   setError: (err: string | null) => void;
   setVinylLabelImage: (img: string | null) => void;
+  isExporting: boolean;
+  setIsExporting: (exporting: boolean) => void;
+  exportWidth: number | null;
+  exportHeight: number | null;
+  setExportDimensions: (width: number | null, height: number | null) => void;
   reset: () => void;
   getAvailablePresets: () => Preset[];
 }
@@ -129,7 +134,12 @@ export const useStore = create<AppState>((set, get) => ({
   currentTime: 0,
   error: null,
   vinylLabelImage: null,
+  isExporting: false,
+  exportWidth: null,
+  exportHeight: null,
 
+  setIsExporting: (isExporting) => set({ isExporting }),
+  setExportDimensions: (width, height) => set({ exportWidth: width, exportHeight: height }),
   setSource: (type, url) => set({ sourceType: type, sourceUrl: url }),
   setAudioState: (audioState) => set({ audioState }),
   setAudioContext: (audioContext) => set({ audioContext }),
@@ -175,6 +185,9 @@ export const useStore = create<AppState>((set, get) => ({
       currentTime: 0,
       error: null,
       vinylLabelImage: null,
+      isExporting: false,
+      exportWidth: null,
+      exportHeight: null,
     }),
 
   getAvailablePresets: () => Object.values(PRESETS),

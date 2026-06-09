@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { getExportConfig, generateEmbedCode } from '@/lib/export';
 import { useStore } from '@/store/useStore';
+import fixWebmDuration from 'fix-webm-duration';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 import type { ExportFormat, ExportPlatform } from '@/types';
 
@@ -50,6 +51,12 @@ export function ExportPanel() {
       alert('Audio context not ready! Please play audio first.');
       return;
     }
+
+    const config = getExportConfig(selectedPlatform);
+    
+    // Set exporting state in the store to force optimized resolution
+    storeState.setIsExporting(true);
+    storeState.setExportDimensions(config.width, config.height);
 
     setIsExporting(true);
     setProgress(0);
@@ -121,6 +128,8 @@ export function ExportPanel() {
         recorder.onstop = () => resolve();
       });
 
+      const actualDurationMs = Date.now() - startTime;
+
       // 8. Restore audio state
       if (!wasPlaying) {
         togglePlayPause();
@@ -129,10 +138,20 @@ export function ExportPanel() {
       // 9. Disconnect tap node (doesn't affect main graph)
       try { analyser.disconnect(audioStreamNode); } catch {}
 
-      // 10. Download the recorded blob
+      // 10. Inject WebM duration metadata
+      setProgress(99);
+      const rawBlob = new Blob(chunks, { type: mimeType });
+      let fixedBlob = rawBlob;
+      try {
+        console.log('[SpectraFlow Export] Fixing WebM duration metadata:', actualDurationMs);
+        fixedBlob = await fixWebmDuration(rawBlob, actualDurationMs);
+      } catch (fixErr) {
+        console.error('[SpectraFlow Export] Failed to fix WebM duration:', fixErr);
+      }
+
+      // 11. Download the recorded blob
       const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
-      const blob = new Blob(chunks, { type: mimeType });
-      const url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(fixedBlob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `spectraflow-visualization.${ext}`;
@@ -145,6 +164,8 @@ export function ExportPanel() {
       setTimeout(() => {
         setIsExporting(false);
         setProgress(0);
+        storeState.setIsExporting(false);
+        storeState.setExportDimensions(null, null);
       }, 800);
 
     } catch (err: any) {
@@ -153,8 +174,11 @@ export function ExportPanel() {
       try { if (audioStreamNode && analyser) analyser.disconnect(audioStreamNode); } catch {}
       setIsExporting(false);
       setProgress(0);
+      storeState.setIsExporting(false);
+      storeState.setExportDimensions(null, null);
     }
-  }, [selectedFormat, duration, togglePlayPause]);
+  }, [selectedFormat, selectedPlatform, duration, togglePlayPause]);
+
 
 
   if (audioState !== 'ready') return null;
