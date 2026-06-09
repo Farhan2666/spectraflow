@@ -5,15 +5,14 @@ import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { getExportConfig, generateEmbedCode } from '@/lib/export';
 import { useStore } from '@/store/useStore';
-import fixWebmDuration from 'fix-webm-duration';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 import type { ExportFormat, ExportPlatform } from '@/types';
 
 const PLATFORMS: { id: ExportPlatform; label: string; icon: string }[] = [
-  { id: 'instagram', label: 'IG Reel', icon: '◻' },
-  { id: 'tiktok', label: 'TikTok', icon: '♪' },
-  { id: 'twitter', label: 'X/Twitter', icon: '◉' },
-  { id: 'youtube', label: 'YouTube', icon: '▶' },
+  { id: 'instagram', label: 'IG Reel', icon: '\u25fb' },
+  { id: 'tiktok', label: 'TikTok', icon: '\u266a' },
+  { id: 'twitter', label: 'X/Twitter', icon: '\u25c9' },
+  { id: 'youtube', label: 'YouTube', icon: '\u25b6' },
 ];
 
 const FORMATS: { id: ExportFormat; label: string }[] = [
@@ -41,7 +40,7 @@ export function ExportPanel() {
 
     const canvas = document.querySelector('canvas');
     if (!canvas) {
-      alert('Visualizer canvas not found!');
+      alert('Visualizer canvas not found! Make sure the visualizer is active.');
       return;
     }
 
@@ -49,155 +48,145 @@ export function ExportPanel() {
     const ctx = storeState.audioContext;
     const analyser = storeState.analyserNode;
     if (!ctx || !analyser) {
-      alert('Audio context not ready! Please play audio first.');
+      alert('Audio is not ready. Please play a song first, then try again.');
       return;
     }
 
-    const config = getExportConfig(selectedPlatform);
-    
-    // Set exporting state in the store to force optimized resolution
-    storeState.setIsExporting(true);
-    storeState.setExportDimensions(config.width, config.height);
-
     setIsExporting(true);
     setProgress(0);
-
-    // Wait a short moment to let the canvas resize and render at least one frame
-    // before we capture the stream. This prevents MediaRecorder track resolution failure.
-    await new Promise(r => setTimeout(r, 150));
 
     let audioStreamNode: MediaStreamAudioDestinationNode | null = null;
     const chunks: Blob[] = [];
 
     try {
-      // 1. Tap audio output WITHOUT disturbing existing connections
+      // 1. Tap audio output without disturbing existing connections
       audioStreamNode = ctx.createMediaStreamDestination();
       analyser.connect(audioStreamNode);
 
-      // 2. Capture canvas stream at 30 FPS
+      // 2. Capture the live canvas at 30 FPS (at current display resolution)
       const canvasStream = (canvas as any).captureStream(30) as MediaStream;
-      if (!canvasStream) {
-        throw new Error('Canvas captureStream not supported in this browser.');
+      if (!canvasStream || canvasStream.getVideoTracks().length === 0) {
+        throw new Error('canvas.captureStream() failed. Please use Chrome or Edge browser.');
       }
 
-      // 3. Combine canvas video + tapped audio
-      const combinedStream = new MediaStream();
-      canvasStream.getVideoTracks().forEach(t => combinedStream.addTrack(t));
-      audioStreamNode.stream.getAudioTracks().forEach(t => combinedStream.addTrack(t));
+      // 3. Merge canvas video track + audio track into one stream
+      const combinedStream = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...audioStreamNode.stream.getAudioTracks(),
+      ]);
 
-      // 4. Pick best supported mimeType — WEBM only (mp4 not reliable in Chrome)
-      const webmTypes = [
+      // 4. Use the best supported WebM codec (MP4 is unreliable in Chrome/Edge MediaRecorder)
+      const mimeType = [
         'video/webm;codecs=vp9,opus',
         'video/webm;codecs=vp8,opus',
         'video/webm',
-      ];
-      const mimeType = webmTypes.find(t => MediaRecorder.isTypeSupported(t)) || '';
+      ].find(t => MediaRecorder.isTypeSupported(t));
+
       if (!mimeType) {
-        throw new Error('No supported video format found. Please use Chrome or Edge.');
+        throw new Error('Your browser does not support video recording. Please use Chrome or Edge.');
       }
-      console.log('[SpectraFlow Export] Using mimeType:', mimeType);
+      console.log('[SpectraFlow Export] Recording with mimeType:', mimeType);
 
-      // 5. Start recording
-      const recorder = new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 4_000_000 });
-      recorder.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
+      // 5. If Full Song mode, seek back to 0 before starting
+      if (useFullSong) {
+        seekTo(0);
+        await new Promise(r => setTimeout(r, 400)); // give time for audio to seek + buffer
+      }
 
-      // Make sure audio is playing and seek to beginning for a clean start
-      const wasPlaying = storeState.isPlaying;
-      
-      // Seek to 0 to record the entire song
-      seekTo(0);
-      await new Promise(r => setTimeout(r, 150));
-
+      // 6. Ensure audio is playing
+      const wasPlaying = useStore.getState().isPlaying;
       if (!wasPlaying) {
         togglePlayPause();
-        await new Promise(r => setTimeout(r, 200));
+        await new Promise(r => setTimeout(r, 300));
       }
 
-      recorder.start(250); // collect data every 250ms
+      // 7. Start MediaRecorder
+      const recorder = new MediaRecorder(combinedStream, {
+        mimeType,
+        videoBitsPerSecond: 5_000_000,
+      });
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+      recorder.start(500); // request data chunks every 500ms
+      const recordingStart = Date.now();
 
-      // 6. Progress tracking + auto-stop after duration
-      const startTime = Date.now();
-      const songDuration = storeState.duration;
-      const exportDuration = (useFullSong && songDuration && songDuration > 0) ? Math.ceil(songDuration) : duration;
-      const exportDurationMs = exportDuration * 1000;
+      // 8. Resolve export duration
+      const songDurationSec = useStore.getState().duration || 0;
+      const exportDurationMs = (useFullSong && songDurationSec > 1)
+        ? Math.ceil(songDurationSec * 1000) + 500 // add 500ms tail buffer
+        : duration * 1000;
 
+      console.log('[SpectraFlow Export] Recording for', exportDurationMs, 'ms');
+
+      // 9. Timer loop: update progress bar, stop recorder when done
       await new Promise<void>((resolve) => {
         const tick = setInterval(() => {
-          const elapsed = Date.now() - startTime;
-          const pct = Math.min(Math.round((elapsed / exportDurationMs) * 100), 99);
-          setProgress(pct);
-
+          const elapsed = Date.now() - recordingStart;
+          setProgress(Math.min(Math.round((elapsed / exportDurationMs) * 100), 99));
           if (elapsed >= exportDurationMs) {
             clearInterval(tick);
             recorder.stop();
             resolve();
           }
-        }, 100);
+        }, 150);
       });
 
-      // 7. Wait for final data
+      // 10. Wait for the final ondataavailable + onstop events
       await new Promise<void>((resolve) => {
         recorder.onstop = () => resolve();
       });
 
-      const actualDurationMs = Date.now() - startTime;
+      const actualMs = Date.now() - recordingStart;
+      console.log('[SpectraFlow Export] Actual recording duration:', actualMs, 'ms');
 
-      // 8. Restore audio state
-      if (!wasPlaying) {
-        togglePlayPause();
-      }
+      // 11. Restore audio state
+      if (!wasPlaying) togglePlayPause();
 
-      // 9. Disconnect tap node (doesn't affect main graph)
-      try { analyser.disconnect(audioStreamNode); } catch {}
+      // 12. Disconnect the tapped audio node (safe - doesn't affect main graph)
+      try { analyser.disconnect(audioStreamNode); } catch (_) {}
 
-      // 10. Inject WebM duration metadata
+      // 13. Inject correct WebM duration metadata into the blob
       setProgress(99);
       const rawBlob = new Blob(chunks, { type: mimeType });
-      let fixedBlob = rawBlob;
+      console.log('[SpectraFlow Export] Raw blob size:', rawBlob.size, 'bytes');
+
+      let finalBlob = rawBlob;
       try {
-        console.log('[SpectraFlow Export] Fixing WebM duration metadata:', actualDurationMs);
-        const fixer = typeof fixWebmDuration === 'function' ? fixWebmDuration : (fixWebmDuration as any).default;
-        if (typeof fixer === 'function') {
-          fixedBlob = await fixer(rawBlob, actualDurationMs);
-        } else {
-          console.warn('[SpectraFlow Export] fixWebmDuration is not a function');
+        // Dynamic import avoids SSR issues with this CommonJS library
+        const fixMod = await import('fix-webm-duration');
+        const fixFn = (fixMod.default ?? fixMod) as (b: Blob, d: number) => Promise<Blob>;
+        if (typeof fixFn === 'function') {
+          finalBlob = await fixFn(rawBlob, actualMs);
+          console.log('[SpectraFlow Export] Duration metadata fixed. Final size:', finalBlob.size, 'bytes');
         }
       } catch (fixErr) {
-        console.error('[SpectraFlow Export] Failed to fix WebM duration:', fixErr);
+        console.warn('[SpectraFlow Export] Could not fix WebM duration metadata (non-fatal):', fixErr);
       }
 
-      // 11. Download the recorded blob
-      const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
-      const url = URL.createObjectURL(fixedBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `spectraflow-visualization.${ext}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      // 14. Trigger browser download
+      const url = URL.createObjectURL(finalBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'spectraflow-visualization.webm';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
 
       setProgress(100);
-      setTimeout(() => {
-        setIsExporting(false);
-        setProgress(0);
-        storeState.setIsExporting(false);
-        storeState.setExportDimensions(null, null);
-      }, 800);
+      setTimeout(() => { setIsExporting(false); setProgress(0); }, 1000);
 
     } catch (err: any) {
-      console.error('[SpectraFlow Export] Failed:', err);
-      alert('Export failed: ' + (err?.message || String(err)));
-      try { if (audioStreamNode && analyser) analyser.disconnect(audioStreamNode); } catch {}
+      console.error('[SpectraFlow Export] Error:', err);
+      alert('Export failed: ' + (err?.message ?? String(err)));
+      if (audioStreamNode && analyser) {
+        try { analyser.disconnect(audioStreamNode); } catch (_) {}
+      }
       setIsExporting(false);
       setProgress(0);
-      storeState.setIsExporting(false);
-      storeState.setExportDimensions(null, null);
     }
-  }, [selectedFormat, selectedPlatform, duration, useFullSong, togglePlayPause, seekTo]);
-
-
-
+  }, [selectedFormat, duration, useFullSong, togglePlayPause, seekTo]);
 
   if (audioState !== 'ready') return null;
 
@@ -207,9 +196,10 @@ export function ExportPanel() {
     <div className="p-4 rounded-2xl bg-[#1A1A24]/50 border border-[#2A2A3E] space-y-4">
       <h3 className="text-xs font-mono text-[#9090A8] uppercase tracking-wider">Export</h3>
 
+      {/* Platform selector */}
       <div>
         <p className="text-[10px] font-mono text-[#9090A8] mb-2">Platform</p>
-        <div className="flex gap-1.5">
+        <div className="flex gap-1.5 flex-wrap">
           {PLATFORMS.map((platform) => (
             <motion.button
               key={platform.id}
@@ -230,6 +220,7 @@ export function ExportPanel() {
         </div>
       </div>
 
+      {/* Format selector */}
       <div>
         <p className="text-[10px] font-mono text-[#9090A8] mb-2">Format</p>
         <div className="flex gap-1.5">
@@ -238,10 +229,7 @@ export function ExportPanel() {
               key={fmt.id}
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              onClick={() => {
-                setSelectedFormat(fmt.id);
-                setEmbedCode(null);
-              }}
+              onClick={() => { setSelectedFormat(fmt.id); setEmbedCode(null); }}
               className={cn(
                 'px-3 py-1.5 rounded-lg text-xs font-mono border transition-all',
                 selectedFormat === fmt.id
@@ -255,9 +243,10 @@ export function ExportPanel() {
         </div>
       </div>
 
+      {/* Duration controls */}
       {selectedFormat !== 'embed' && (
         <div className="space-y-2">
-          <div className="flex justify-between items-center mb-1">
+          <div className="flex justify-between items-center">
             <p className="text-[10px] font-mono text-[#9090A8]">
               Duration: {useFullSong ? 'Full Song' : `${duration}s`}
             </p>
@@ -266,12 +255,12 @@ export function ExportPanel() {
                 type="checkbox"
                 checked={useFullSong}
                 onChange={(e) => setUseFullSong(e.target.checked)}
-                className="w-3.5 h-3.5 rounded bg-[#1A1A24] border-[#2A2A3E] text-[#5E60CE] focus:ring-0 cursor-pointer"
+                className="w-3.5 h-3.5 accent-[#5E60CE] cursor-pointer"
               />
               <span className="text-[10px] font-mono text-[#9090A8]">Full Song</span>
             </label>
           </div>
-          
+
           {!useFullSong && (
             <>
               <div className="relative h-1.5 rounded-full bg-[#2A2A3E]">
@@ -288,9 +277,9 @@ export function ExportPanel() {
                   className="absolute inset-0 w-full opacity-0 cursor-pointer"
                 />
               </div>
-              <div className="flex justify-between mt-1">
+              <div className="flex justify-between">
                 <span className="text-[10px] text-[#9090A8] font-mono">3s</span>
-                <span className="text-[10px] text-[#9090A8] font-mono">{config.width}x{config.height}</span>
+                <span className="text-[10px] text-[#9090A8] font-mono">{config.width}×{config.height}</span>
                 <span className="text-[10px] text-[#9090A8] font-mono">60s</span>
               </div>
             </>
@@ -298,6 +287,7 @@ export function ExportPanel() {
         </div>
       )}
 
+      {/* Embed code OR download button */}
       {embedCode ? (
         <div className="space-y-2">
           <div className="p-2 rounded-lg bg-[#0F0F12] border border-[#2A2A3E]">
@@ -335,23 +325,24 @@ export function ExportPanel() {
                 Recording... {progress}%
               </span>
             ) : (
-              `Download ${selectedFormat === 'mp4' ? 'Video' : selectedFormat.toUpperCase()}`
+              'Download Video'
             )}
           </motion.button>
+
           {isExporting && (
-            <div className="relative h-1 rounded-full bg-[#2A2A3E] overflow-hidden">
-              <motion.div
-                className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#5E60CE] to-[#00F5FF]"
-                initial={{ width: '0%' }}
-                animate={{ width: `${progress}%` }}
-                transition={{ duration: 0.1 }}
-              />
-            </div>
-          )}
-          {isExporting && (
-            <p className="text-[10px] font-mono text-[#9090A8] text-center">
-              🎬 Recording your visualizer... audio is playing
-            </p>
+            <>
+              <div className="relative h-1 rounded-full bg-[#2A2A3E] overflow-hidden">
+                <motion.div
+                  className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#5E60CE] to-[#00F5FF]"
+                  initial={{ width: '0%' }}
+                  animate={{ width: `${progress}%` }}
+                  transition={{ duration: 0.15 }}
+                />
+              </div>
+              <p className="text-[10px] font-mono text-[#9090A8] text-center">
+                🎬 Recording visualizer + audio... please wait
+              </p>
+            </>
           )}
         </div>
       )}
