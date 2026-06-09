@@ -24,10 +24,11 @@ const FORMATS: { id: ExportFormat; label: string }[] = [
 
 export function ExportPanel() {
   const { audioState } = useStore();
-  const { togglePlayPause } = useAudioEngine();
+  const { togglePlayPause, seekTo } = useAudioEngine();
   const [selectedPlatform, setSelectedPlatform] = useState<ExportPlatform>('instagram');
   const [selectedFormat, setSelectedFormat] = useState<ExportFormat>('mp4');
   const [duration, setDuration] = useState(15);
+  const [useFullSong, setUseFullSong] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [embedCode, setEmbedCode] = useState<string | null>(null);
@@ -61,6 +62,10 @@ export function ExportPanel() {
     setIsExporting(true);
     setProgress(0);
 
+    // Wait a short moment to let the canvas resize and render at least one frame
+    // before we capture the stream. This prevents MediaRecorder track resolution failure.
+    await new Promise(r => setTimeout(r, 150));
+
     let audioStreamNode: MediaStreamAudioDestinationNode | null = null;
     const chunks: Blob[] = [];
 
@@ -92,12 +97,17 @@ export function ExportPanel() {
       }
       console.log('[SpectraFlow Export] Using mimeType:', mimeType);
 
-      // 5. Start recording (from current position — no seeking/restarting)
+      // 5. Start recording
       const recorder = new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 4_000_000 });
       recorder.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
 
-      // Make sure audio is playing before recording
+      // Make sure audio is playing and seek to beginning for a clean start
       const wasPlaying = storeState.isPlaying;
+      
+      // Seek to 0 to record the entire song
+      seekTo(0);
+      await new Promise(r => setTimeout(r, 150));
+
       if (!wasPlaying) {
         togglePlayPause();
         await new Promise(r => setTimeout(r, 200));
@@ -107,7 +117,9 @@ export function ExportPanel() {
 
       // 6. Progress tracking + auto-stop after duration
       const startTime = Date.now();
-      const exportDurationMs = duration * 1000;
+      const songDuration = storeState.duration;
+      const exportDuration = (useFullSong && songDuration && songDuration > 0) ? Math.ceil(songDuration) : duration;
+      const exportDurationMs = exportDuration * 1000;
 
       await new Promise<void>((resolve) => {
         const tick = setInterval(() => {
@@ -144,7 +156,12 @@ export function ExportPanel() {
       let fixedBlob = rawBlob;
       try {
         console.log('[SpectraFlow Export] Fixing WebM duration metadata:', actualDurationMs);
-        fixedBlob = await fixWebmDuration(rawBlob, actualDurationMs);
+        const fixer = typeof fixWebmDuration === 'function' ? fixWebmDuration : (fixWebmDuration as any).default;
+        if (typeof fixer === 'function') {
+          fixedBlob = await fixer(rawBlob, actualDurationMs);
+        } else {
+          console.warn('[SpectraFlow Export] fixWebmDuration is not a function');
+        }
       } catch (fixErr) {
         console.error('[SpectraFlow Export] Failed to fix WebM duration:', fixErr);
       }
@@ -177,7 +194,8 @@ export function ExportPanel() {
       storeState.setIsExporting(false);
       storeState.setExportDimensions(null, null);
     }
-  }, [selectedFormat, selectedPlatform, duration, togglePlayPause]);
+  }, [selectedFormat, selectedPlatform, duration, useFullSong, togglePlayPause, seekTo]);
+
 
 
 
@@ -238,29 +256,45 @@ export function ExportPanel() {
       </div>
 
       {selectedFormat !== 'embed' && (
-        <div>
-          <p className="text-[10px] font-mono text-[#9090A8] mb-2">
-            Duration: {duration}s <span className="text-[#9090A8]/50">(max 15s free)</span>
-          </p>
-          <div className="relative h-1.5 rounded-full bg-[#2A2A3E]">
-            <motion.div
-              className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#5E60CE] to-[#FF2D75]"
-              style={{ width: `${(duration / 60) * 100}%` }}
-            />
-            <input
-              type="range"
-              min={3}
-              max={60}
-              value={duration}
-              onChange={(e) => setDuration(parseInt(e.target.value))}
-              className="absolute inset-0 w-full opacity-0 cursor-pointer"
-            />
+        <div className="space-y-2">
+          <div className="flex justify-between items-center mb-1">
+            <p className="text-[10px] font-mono text-[#9090A8]">
+              Duration: {useFullSong ? 'Full Song' : `${duration}s`}
+            </p>
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={useFullSong}
+                onChange={(e) => setUseFullSong(e.target.checked)}
+                className="w-3.5 h-3.5 rounded bg-[#1A1A24] border-[#2A2A3E] text-[#5E60CE] focus:ring-0 cursor-pointer"
+              />
+              <span className="text-[10px] font-mono text-[#9090A8]">Full Song</span>
+            </label>
           </div>
-          <div className="flex justify-between mt-1">
-            <span className="text-[10px] text-[#9090A8] font-mono">3s</span>
-            <span className="text-[10px] text-[#9090A8] font-mono">{config.width}x{config.height}</span>
-            <span className="text-[10px] text-[#9090A8] font-mono">60s</span>
-          </div>
+          
+          {!useFullSong && (
+            <>
+              <div className="relative h-1.5 rounded-full bg-[#2A2A3E]">
+                <motion.div
+                  className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#5E60CE] to-[#FF2D75]"
+                  style={{ width: `${(duration / 60) * 100}%` }}
+                />
+                <input
+                  type="range"
+                  min={3}
+                  max={60}
+                  value={duration}
+                  onChange={(e) => setDuration(parseInt(e.target.value))}
+                  className="absolute inset-0 w-full opacity-0 cursor-pointer"
+                />
+              </div>
+              <div className="flex justify-between mt-1">
+                <span className="text-[10px] text-[#9090A8] font-mono">3s</span>
+                <span className="text-[10px] text-[#9090A8] font-mono">{config.width}x{config.height}</span>
+                <span className="text-[10px] text-[#9090A8] font-mono">60s</span>
+              </div>
+            </>
+          )}
         </div>
       )}
 
