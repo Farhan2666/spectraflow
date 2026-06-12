@@ -87,6 +87,9 @@ export async function GET(request: NextRequest) {
         'Content-Type': contentType,
         'Accept-Ranges': 'bytes',
         'Access-Control-Allow-Origin': '*',
+        ...(streamResponse.headers.get('content-length')
+          ? { 'Content-Length': streamResponse.headers.get('content-length')! }
+          : {}),
       },
     });
   } catch (error: any) {

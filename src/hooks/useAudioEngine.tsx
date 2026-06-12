@@ -97,7 +97,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         audioElementRef.current = audio;
         audio.crossOrigin = 'anonymous';
 
-        audio.oncanplaythrough = () => {
+        audio.oncanplay = () => {
+          audio.oncanplay = null; // prevent double-fire
           const liveState = useStore.getState();
           const liveCtx = liveState.audioContext;
           const liveAnalyser = liveState.analyserNode;
@@ -131,6 +132,18 @@ export function AudioProvider({ children }: { children: ReactNode }) {
           liveState.setError('Failed to load audio. Try uploading the file instead.');
           reject(new Error('Audio load error'));
         };
+
+        // Timeout: if audio doesn't load within 30s, reject
+        setTimeout(() => {
+          if (audio.readyState < 3) {
+            const liveState = useStore.getState();
+            if (liveState.audioState === 'processing') {
+              liveState.setAudioState('error');
+              liveState.setError('Audio loading timed out. The YouTube proxy may be unavailable. Try uploading the file instead.');
+              reject(new Error('Audio load timeout'));
+            }
+          }
+        }, 30000);
       } catch (e: any) {
         const liveState = useStore.getState();
         liveState.setAudioState('error');
@@ -166,7 +179,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         audioElementRef.current = audio;
         audio.crossOrigin = 'anonymous';
 
-        audio.oncanplaythrough = () => {
+        audio.oncanplay = () => {
+          audio.oncanplay = null; // prevent double-fire
           const liveState = useStore.getState();
           const liveCtx = liveState.audioContext;
           const liveAnalyser = liveState.analyserNode;
@@ -234,7 +248,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         audioElementRef.current = audio;
         audio.crossOrigin = 'anonymous';
 
-        audio.oncanplaythrough = () => {
+        audio.oncanplay = () => {
+          audio.oncanplay = null; // prevent double-fire
           const liveState = useStore.getState();
           const liveCtx = liveState.audioContext;
           const liveAnalyser = liveState.analyserNode;
