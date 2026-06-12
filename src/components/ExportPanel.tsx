@@ -76,9 +76,8 @@ export function ExportPanel() {
         ...audioStreamNode.stream.getAudioTracks(),
       ]);
 
-      // 4. Try MP4 first (best compatibility), then fall back to WebM
+      // 4. Use WebM (MP4 recording is broken in Chrome despite isTypeSupported returning true)
       const mimeType = [
-        'video/mp4;codecs=avc1,mp4a.40.2',
         'video/webm;codecs=vp9,opus',
         'video/webm;codecs=vp8,opus',
         'video/webm',
@@ -87,7 +86,6 @@ export function ExportPanel() {
       if (!mimeType) {
         throw new Error('Your browser does not support video recording. Please use Chrome or Edge.');
       }
-      const isMp4 = mimeType.includes('mp4');
       console.log('[SpectraFlow Export] Recording with mimeType:', mimeType);
 
       // 5. If Full Song mode, seek back to 0 and WAIT for seek to complete
@@ -111,9 +109,17 @@ export function ExportPanel() {
         mimeType,
         videoBitsPerSecond: 5_000_000,
       });
+
+      // Set up handlers BEFORE starting to avoid race conditions
+      let recorderError: string | null = null;
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunks.push(e.data);
       };
+      recorder.onerror = (e: any) => {
+        recorderError = e?.error?.message || e?.message || 'MediaRecorder error';
+        console.error('[SpectraFlow Export] Recorder error:', recorderError);
+      };
+
       recorder.start(500); // request data chunks every 500ms
       const recordingStart = Date.now();
 
@@ -172,6 +178,16 @@ export function ExportPanel() {
       const actualMs = Date.now() - recordingStart;
       console.log('[SpectraFlow Export] Actual recording duration:', actualMs, 'ms');
 
+      // Check for recorder errors
+      if (recorderError) {
+        throw new Error('Recording error: ' + recorderError);
+      }
+
+      // Check we actually got data
+      if (chunks.length === 0) {
+        throw new Error('Recording produced no data. The canvas may not support captureStream().');
+      }
+
       // 12. Restore audio state
       if (!wasPlaying) togglePlayPause();
 
@@ -185,26 +201,29 @@ export function ExportPanel() {
 
       let finalBlob = rawBlob;
 
-      // Fix WebM duration metadata (critical for playback!)
-      if (mimeType.includes('webm')) {
-        try {
-          const fixMod = await import('fix-webm-duration');
-          const fixFn = (fixMod.default ?? fixMod) as (b: Blob, d: number) => Promise<Blob>;
-          if (typeof fixFn === 'function') {
-            finalBlob = await fixFn(rawBlob, actualMs);
+      // Fix WebM duration metadata (critical for playback in most players!)
+      try {
+        const fixMod = await import('fix-webm-duration');
+        const fixFn = (fixMod.default ?? fixMod) as (b: Blob, d: number) => Promise<Blob>;
+        if (typeof fixFn === 'function') {
+          const fixed = await fixFn(rawBlob, actualMs);
+          // Safety: only use fixed blob if it's not smaller than raw (avoid corruption)
+          if (fixed.size >= rawBlob.size) {
+            finalBlob = fixed;
             console.log('[SpectraFlow Export] WebM duration fixed. Final size:', finalBlob.size, 'bytes');
+          } else {
+            console.warn('[SpectraFlow Export] fix-webm-duration returned smaller blob (' + fixed.size + ' vs ' + rawBlob.size + '), using raw blob');
           }
-        } catch (fixErr) {
-          console.warn('[SpectraFlow Export] Could not fix WebM duration (non-fatal):', fixErr);
         }
+      } catch (fixErr) {
+        console.warn('[SpectraFlow Export] Could not fix WebM duration (non-fatal):', fixErr);
       }
 
       // 15. Trigger browser download
-      const extension = isMp4 ? 'mp4' : 'webm';
       const url = URL.createObjectURL(finalBlob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `spectraflow-visualization.${extension}`;
+      link.download = 'spectraflow-visualization.webm';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
