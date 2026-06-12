@@ -47,6 +47,7 @@ export function ExportPanel() {
     const storeState = useStore.getState();
     const ctx = storeState.audioContext;
     const analyser = storeState.analyserNode;
+    const audioElement = storeState.audioElement;
     if (!ctx || !analyser) {
       alert('Audio is not ready. Please play a song first, then try again.');
       return;
@@ -75,8 +76,9 @@ export function ExportPanel() {
         ...audioStreamNode.stream.getAudioTracks(),
       ]);
 
-      // 4. Use the best supported WebM codec (MP4 is unreliable in Chrome/Edge MediaRecorder)
+      // 4. Try MP4 first (best compatibility), then fall back to WebM
       const mimeType = [
+        'video/mp4;codecs=avc1,mp4a.40.2',
         'video/webm;codecs=vp9,opus',
         'video/webm;codecs=vp8,opus',
         'video/webm',
@@ -85,12 +87,13 @@ export function ExportPanel() {
       if (!mimeType) {
         throw new Error('Your browser does not support video recording. Please use Chrome or Edge.');
       }
+      const isMp4 = mimeType.includes('mp4');
       console.log('[SpectraFlow Export] Recording with mimeType:', mimeType);
 
-      // 5. If Full Song mode, seek back to 0 before starting
+      // 5. If Full Song mode, seek back to 0 and WAIT for seek to complete
       if (useFullSong) {
-        seekTo(0);
-        await new Promise(r => setTimeout(r, 400)); // give time for audio to seek + buffer
+        await seekTo(0);
+        await new Promise(r => setTimeout(r, 500)); // extra buffer for audio graph to stabilize
       }
 
       // 6. Ensure audio is playing
@@ -100,7 +103,10 @@ export function ExportPanel() {
         await new Promise(r => setTimeout(r, 300));
       }
 
-      // 7. Start MediaRecorder
+      // 7. Get song duration AFTER seeking (so it's accurate)
+      const songDurationSec = useStore.getState().duration || 0;
+
+      // 8. Start MediaRecorder
       const recorder = new MediaRecorder(combinedStream, {
         mimeType,
         videoBitsPerSecond: 5_000_000,
@@ -111,64 +117,94 @@ export function ExportPanel() {
       recorder.start(500); // request data chunks every 500ms
       const recordingStart = Date.now();
 
-      // 8. Resolve export duration
-      const songDurationSec = useStore.getState().duration || 0;
+      // 9. Resolve export duration
       const exportDurationMs = (useFullSong && songDurationSec > 1)
-        ? Math.ceil(songDurationSec * 1000) + 500 // add 500ms tail buffer
+        ? Math.ceil(songDurationSec * 1000) + 1000 // add 1s tail buffer
         : duration * 1000;
 
-      console.log('[SpectraFlow Export] Recording for', exportDurationMs, 'ms');
+      console.log('[SpectraFlow Export] Recording for', exportDurationMs, 'ms',
+        useFullSong ? '(full song)' : '(custom duration)');
 
-      // 9. Timer loop: update progress bar, stop recorder when done
+      // 10. Set up audio ended detection for Full Song mode
+      let audioEnded = false;
+      const onAudioEnded = () => { audioEnded = true; };
+      if (audioElement && useFullSong) {
+        audioElement.addEventListener('ended', onAudioEnded);
+      }
+
+      // 11. Timer loop: update progress bar, stop when done or audio ends
+      let stopped = false;
+      const stopRecording = () => {
+        if (stopped) return;
+        stopped = true;
+        try { recorder.stop(); } catch (_) {}
+        if (audioElement) {
+          audioElement.removeEventListener('ended', onAudioEnded);
+        }
+      };
+
       await new Promise<void>((resolve) => {
         const tick = setInterval(() => {
           const elapsed = Date.now() - recordingStart;
           setProgress(Math.min(Math.round((elapsed / exportDurationMs) * 100), 99));
-          if (elapsed >= exportDurationMs) {
+
+          // Stop conditions: time exceeded OR (full song + audio ended + at least 2s recorded)
+          if (elapsed >= exportDurationMs || (audioEnded && elapsed > 2000)) {
             clearInterval(tick);
-            recorder.stop();
+            stopRecording();
             resolve();
           }
         }, 150);
-      });
 
-      // 10. Wait for the final ondataavailable + onstop events
-      await new Promise<void>((resolve) => {
-        recorder.onstop = () => resolve();
+        // Also listen for recorder stop event (safety net)
+        recorder.onstop = () => {
+          clearInterval(tick);
+          if (!stopped) {
+            stopped = true;
+            if (audioElement) {
+              audioElement.removeEventListener('ended', onAudioEnded);
+            }
+          }
+          resolve();
+        };
       });
 
       const actualMs = Date.now() - recordingStart;
       console.log('[SpectraFlow Export] Actual recording duration:', actualMs, 'ms');
 
-      // 11. Restore audio state
+      // 12. Restore audio state
       if (!wasPlaying) togglePlayPause();
 
-      // 12. Disconnect the tapped audio node (safe - doesn't affect main graph)
+      // 13. Disconnect the tapped audio node
       try { analyser.disconnect(audioStreamNode); } catch (_) {}
 
-      // 13. Inject correct WebM duration metadata into the blob
+      // 14. Build blob and fix duration metadata
       setProgress(99);
       const rawBlob = new Blob(chunks, { type: mimeType });
       console.log('[SpectraFlow Export] Raw blob size:', rawBlob.size, 'bytes');
 
       let finalBlob = rawBlob;
-      try {
-        // Dynamic import avoids SSR issues with this CommonJS library
-        const fixMod = await import('fix-webm-duration');
-        const fixFn = (fixMod.default ?? fixMod) as (b: Blob, d: number) => Promise<Blob>;
-        if (typeof fixFn === 'function') {
-          finalBlob = await fixFn(rawBlob, actualMs);
-          console.log('[SpectraFlow Export] Duration metadata fixed. Final size:', finalBlob.size, 'bytes');
+
+      // Fix WebM duration metadata (critical for playback!)
+      if (mimeType.includes('webm')) {
+        try {
+          const fixMod = await import('fix-webm-duration');
+          const fixFn = (fixMod.default ?? fixMod) as (b: Blob, d: number) => Promise<Blob>;
+          if (typeof fixFn === 'function') {
+            finalBlob = await fixFn(rawBlob, actualMs);
+            console.log('[SpectraFlow Export] WebM duration fixed. Final size:', finalBlob.size, 'bytes');
+          }
+        } catch (fixErr) {
+          console.warn('[SpectraFlow Export] Could not fix WebM duration (non-fatal):', fixErr);
         }
-      } catch (fixErr) {
-        console.warn('[SpectraFlow Export] Could not fix WebM duration metadata (non-fatal):', fixErr);
       }
 
-      // 14. Trigger browser download
+      // 15. Trigger browser download
+      const extension = isMp4 ? 'mp4' : 'webm';
       const url = URL.createObjectURL(finalBlob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = 'spectraflow-visualization.webm';
+      link.download = `spectraflow-visualization.${extension}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -182,6 +218,9 @@ export function ExportPanel() {
       alert('Export failed: ' + (err?.message ?? String(err)));
       if (audioStreamNode && analyser) {
         try { analyser.disconnect(audioStreamNode); } catch (_) {}
+      }
+      if (audioElement) {
+        audioElement.removeEventListener('ended', () => {});
       }
       setIsExporting(false);
       setProgress(0);

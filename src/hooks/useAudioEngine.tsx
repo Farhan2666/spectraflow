@@ -17,7 +17,7 @@ interface AudioEngineContextValue {
   processFileUpload: (file: File) => Promise<void>;
   processDataUrl: (dataUrl: string, name: string) => Promise<void>;
   togglePlayPause: () => void;
-  seekTo: (time: number) => void;
+  seekTo: (time: number) => Promise<void>;
   setVolume: (vol: number) => void;
 }
 
@@ -101,6 +101,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
           const liveState = useStore.getState();
           const liveCtx = liveState.audioContext;
           const liveAnalyser = liveState.analyserNode;
+          liveState.setAudioElement(audio);
 
           if (liveCtx && liveAnalyser) {
             try {
@@ -169,6 +170,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
           const liveState = useStore.getState();
           const liveCtx = liveState.audioContext;
           const liveAnalyser = liveState.analyserNode;
+          liveState.setAudioElement(audio);
 
           if (liveCtx && liveAnalyser) {
             try {
@@ -236,6 +238,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
           const liveState = useStore.getState();
           const liveCtx = liveState.audioContext;
           const liveAnalyser = liveState.analyserNode;
+          liveState.setAudioElement(audio);
 
           if (liveCtx && liveAnalyser) {
             try {
@@ -286,10 +289,16 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const seekTo = useCallback((time: number) => {
-    if (audioElementRef.current) {
-      audioElementRef.current.currentTime = time;
-    }
+  const seekTo = useCallback((time: number): Promise<void> => {
+    return new Promise<void>((resolve) => {
+      const audio = audioElementRef.current;
+      if (!audio) { resolve(); return; }
+      const onSeeked = () => { audio.removeEventListener('seeked', onSeeked); resolve(); };
+      audio.addEventListener('seeked', onSeeked);
+      audio.currentTime = time;
+      // Safety timeout in case seeked event never fires
+      setTimeout(() => { audio.removeEventListener('seeked', onSeeked); resolve(); }, 2000);
+    });
   }, []);
 
   const setVolume = useCallback((vol: number) => {

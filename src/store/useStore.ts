@@ -92,6 +92,8 @@ const PRESETS: Record<string, Preset> = {
 };
 
 interface AppState extends VisualizationState {
+  audioElement: HTMLAudioElement | null;
+  setAudioElement: (el: HTMLAudioElement | null) => void;
   setSource: (type: 'youtube' | 'upload', url: string | null) => void;
   setAudioState: (state: AudioState) => void;
   setAudioContext: (ctx: AudioContext | null) => void;
@@ -118,6 +120,7 @@ interface AppState extends VisualizationState {
 }
 
 export const useStore = create<AppState>((set, get) => ({
+  audioElement: null,
   audioState: 'idle',
   sourceType: null,
   sourceUrl: null,
@@ -138,6 +141,7 @@ export const useStore = create<AppState>((set, get) => ({
   exportWidth: null,
   exportHeight: null,
 
+  setAudioElement: (audioElement) => set({ audioElement }),
   setIsExporting: (isExporting) => set({ isExporting }),
   setExportDimensions: (width, height) => set({ exportWidth: width, exportHeight: height }),
   setSource: (type, url) => set({ sourceType: type, sourceUrl: url }),
@@ -169,6 +173,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   reset: () =>
     set({
+      audioElement: null,
       audioState: 'idle',
       sourceType: null,
       sourceUrl: null,
