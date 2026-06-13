@@ -21,16 +21,10 @@ export function AudioVisualizer() {
     const interval = setInterval(() => {
       setProgress((p) => Math.min(p + Math.random() * 15, 90));
     }, 300);
-    try {
-      await processYouTubeLink(url);
-      clearInterval(interval);
-      setProgress(100);
-      setTimeout(() => setProgress(0), 500);
-    } catch (e) {
-      clearInterval(interval);
-      setProgress(0);
-      console.error('[SpectraFlow] YouTube processing failed:', e);
-    }
+    await processYouTubeLink(url);
+    clearInterval(interval);
+    setProgress(100);
+    setTimeout(() => setProgress(0), 500);
   }, [processYouTubeLink]);
 
   const handleFileUpload = useCallback(async (file: File) => {
@@ -38,16 +32,10 @@ export function AudioVisualizer() {
     const interval = setInterval(() => {
       setProgress((p) => Math.min(p + Math.random() * 20, 85));
     }, 200);
-    try {
-      await processFileUpload(file);
-      clearInterval(interval);
-      setProgress(100);
-      setTimeout(() => setProgress(0), 500);
-    } catch (e) {
-      clearInterval(interval);
-      setProgress(0);
-      console.error('[SpectraFlow] File upload processing failed:', e);
-    }
+    await processFileUpload(file);
+    clearInterval(interval);
+    setProgress(100);
+    setTimeout(() => setProgress(0), 500);
   }, [processFileUpload]);
 
   useEffect(() => {
@@ -63,17 +51,11 @@ export function AudioVisualizer() {
             const interval = setInterval(() => {
               setProgress((p) => Math.min(p + Math.random() * 20, 85));
             }, 200);
-            processDataUrl(parsed.dataUrl, parsed.name || 'Uploaded Audio')
-              .then(() => {
-                clearInterval(interval);
-                setProgress(100);
-                setTimeout(() => setProgress(0), 500);
-              })
-              .catch((e) => {
-                clearInterval(interval);
-                setProgress(0);
-                console.error('[SpectraFlow] Stored audio processing failed:', e);
-              });
+            processDataUrl(parsed.dataUrl, parsed.name || 'Uploaded Audio').then(() => {
+              clearInterval(interval);
+              setProgress(100);
+              setTimeout(() => setProgress(0), 500);
+            });
           }
         } catch (e) {
           console.error('Failed to load stored audio source', e);

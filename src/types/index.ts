@@ -73,4 +73,5 @@ export interface VisualizationState {
   currentTime: number;
   error: string | null;
   vinylLabelImage: string | null;
+  audioElement: HTMLAudioElement | null;
 }

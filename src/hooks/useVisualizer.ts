@@ -641,25 +641,10 @@ export function useVisualizer() {
     const renderLoop = () => {
       analyserNode.getByteFrequencyData(freqData);
       analyserNode.getByteTimeDomainData(timeData);
-      
-      const storeState = useStore.getState();
-      const isExporting = storeState.isExporting;
-      
-      let width, height;
-      if (isExporting && storeState.exportWidth && storeState.exportHeight) {
-        width = storeState.exportWidth;
-        height = storeState.exportHeight;
-      } else {
-        const rect = canvas.getBoundingClientRect();
-        const dpr = window.devicePixelRatio || 1;
-        width = rect.width * dpr;
-        height = rect.height * dpr;
-      }
-      
-      if (canvas.width !== width || canvas.height !== height) {
-        canvas.width = width;
-        canvas.height = height;
-      }
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const width = rect.width * dpr, height = rect.height * dpr;
+      if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
       const style = useStore.getState().currentPreset.config.waveformStyle;
       (RENDERERS[style] || renderBars)({ canvas, frequencyData: freqData, timeDomainData: timeData, preset: useStore.getState().currentPreset, bpm, time: performance.now(), width, height });
       animFrameRef.current = requestAnimationFrame(renderLoop);

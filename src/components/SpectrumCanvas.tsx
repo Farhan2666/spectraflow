@@ -8,7 +8,6 @@ export function SpectrumCanvas() {
   const { canvasRef } = useVisualizer();
   const audioState = useStore((state) => state.audioState);
   const currentPreset = useStore((state) => state.currentPreset);
-  const error = useStore((state) => state.error);
 
   return (
     <div className="relative w-full h-full min-h-[400px] rounded-2xl overflow-hidden bg-[#0F0F12] border border-[#2A2A3E]">
@@ -87,20 +86,11 @@ export function SpectrumCanvas() {
       )}
 
       {audioState === 'error' && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6">
-          <svg className="w-10 h-10 text-[#FF4757] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+          <svg className="w-10 h-10 text-[#FF4757]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
           </svg>
-          <p className="text-sm text-[#FF4757] font-mono text-center">Processing failed</p>
-          {error && (
-            <p className="text-xs text-[#9090A8] font-mono text-center max-w-sm">{error}</p>
-          )}
-          <a
-            href="/"
-            className="mt-2 px-4 py-2 rounded-lg text-xs font-mono bg-[#2A2A3E] text-[#E0E0E0] hover:bg-[#3A3A5E] transition-colors"
-          >
-            Try Again
-          </a>
+          <p className="text-sm text-[#FF4757] font-mono">Processing failed</p>
         </div>
       )}
     </div>

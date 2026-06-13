@@ -17,7 +17,7 @@ interface AudioEngineContextValue {
   processFileUpload: (file: File) => Promise<void>;
   processDataUrl: (dataUrl: string, name: string) => Promise<void>;
   togglePlayPause: () => void;
-  seekTo: (time: number) => Promise<void>;
+  seekTo: (time: number) => void;
   setVolume: (vol: number) => void;
 }
 
@@ -96,13 +96,12 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         const audio = new Audio(audioUrl);
         audioElementRef.current = audio;
         audio.crossOrigin = 'anonymous';
+        useStore.getState().setAudioElement(audio);
 
-        audio.oncanplay = () => {
-          audio.oncanplay = null; // prevent double-fire
+        audio.oncanplaythrough = () => {
           const liveState = useStore.getState();
           const liveCtx = liveState.audioContext;
           const liveAnalyser = liveState.analyserNode;
-          liveState.setAudioElement(audio);
 
           if (liveCtx && liveAnalyser) {
             try {
@@ -132,18 +131,6 @@ export function AudioProvider({ children }: { children: ReactNode }) {
           liveState.setError('Failed to load audio. Try uploading the file instead.');
           reject(new Error('Audio load error'));
         };
-
-        // Timeout: if audio doesn't load within 30s, reject
-        setTimeout(() => {
-          if (audio.readyState < 3) {
-            const liveState = useStore.getState();
-            if (liveState.audioState === 'processing') {
-              liveState.setAudioState('error');
-              liveState.setError('Audio loading timed out. The YouTube proxy may be unavailable. Try uploading the file instead.');
-              reject(new Error('Audio load timeout'));
-            }
-          }
-        }, 30000);
       } catch (e: any) {
         const liveState = useStore.getState();
         liveState.setAudioState('error');
@@ -178,13 +165,12 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         const audio = new Audio(url);
         audioElementRef.current = audio;
         audio.crossOrigin = 'anonymous';
+        useStore.getState().setAudioElement(audio);
 
-        audio.oncanplay = () => {
-          audio.oncanplay = null; // prevent double-fire
+        audio.oncanplaythrough = () => {
           const liveState = useStore.getState();
           const liveCtx = liveState.audioContext;
           const liveAnalyser = liveState.analyserNode;
-          liveState.setAudioElement(audio);
 
           if (liveCtx && liveAnalyser) {
             try {
@@ -247,13 +233,12 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         const audio = new Audio(dataUrl);
         audioElementRef.current = audio;
         audio.crossOrigin = 'anonymous';
+        useStore.getState().setAudioElement(audio);
 
-        audio.oncanplay = () => {
-          audio.oncanplay = null; // prevent double-fire
+        audio.oncanplaythrough = () => {
           const liveState = useStore.getState();
           const liveCtx = liveState.audioContext;
           const liveAnalyser = liveState.analyserNode;
-          liveState.setAudioElement(audio);
 
           if (liveCtx && liveAnalyser) {
             try {
@@ -304,16 +289,10 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const seekTo = useCallback((time: number): Promise<void> => {
-    return new Promise<void>((resolve) => {
-      const audio = audioElementRef.current;
-      if (!audio) { resolve(); return; }
-      const onSeeked = () => { audio.removeEventListener('seeked', onSeeked); resolve(); };
-      audio.addEventListener('seeked', onSeeked);
-      audio.currentTime = time;
-      // Safety timeout in case seeked event never fires
-      setTimeout(() => { audio.removeEventListener('seeked', onSeeked); resolve(); }, 2000);
-    });
+  const seekTo = useCallback((time: number) => {
+    if (audioElementRef.current) {
+      audioElementRef.current.currentTime = time;
+    }
   }, []);
 
   const setVolume = useCallback((vol: number) => {

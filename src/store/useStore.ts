@@ -92,8 +92,6 @@ const PRESETS: Record<string, Preset> = {
 };
 
 interface AppState extends VisualizationState {
-  audioElement: HTMLAudioElement | null;
-  setAudioElement: (el: HTMLAudioElement | null) => void;
   setSource: (type: 'youtube' | 'upload', url: string | null) => void;
   setAudioState: (state: AudioState) => void;
   setAudioContext: (ctx: AudioContext | null) => void;
@@ -110,17 +108,12 @@ interface AppState extends VisualizationState {
   setCurrentTime: (time: number) => void;
   setError: (err: string | null) => void;
   setVinylLabelImage: (img: string | null) => void;
-  isExporting: boolean;
-  setIsExporting: (exporting: boolean) => void;
-  exportWidth: number | null;
-  exportHeight: number | null;
-  setExportDimensions: (width: number | null, height: number | null) => void;
+  setAudioElement: (el: HTMLAudioElement | null) => void;
   reset: () => void;
   getAvailablePresets: () => Preset[];
 }
 
 export const useStore = create<AppState>((set, get) => ({
-  audioElement: null,
   audioState: 'idle',
   sourceType: null,
   sourceUrl: null,
@@ -137,13 +130,8 @@ export const useStore = create<AppState>((set, get) => ({
   currentTime: 0,
   error: null,
   vinylLabelImage: null,
-  isExporting: false,
-  exportWidth: null,
-  exportHeight: null,
+  audioElement: null,
 
-  setAudioElement: (audioElement) => set({ audioElement }),
-  setIsExporting: (isExporting) => set({ isExporting }),
-  setExportDimensions: (width, height) => set({ exportWidth: width, exportHeight: height }),
   setSource: (type, url) => set({ sourceType: type, sourceUrl: url }),
   setAudioState: (audioState) => set({ audioState }),
   setAudioContext: (audioContext) => set({ audioContext }),
@@ -170,10 +158,10 @@ export const useStore = create<AppState>((set, get) => ({
   setCurrentTime: (currentTime) => set({ currentTime }),
   setError: (error) => set({ error }),
   setVinylLabelImage: (vinylLabelImage) => set({ vinylLabelImage }),
+  setAudioElement: (audioElement) => set({ audioElement }),
 
   reset: () =>
     set({
-      audioElement: null,
       audioState: 'idle',
       sourceType: null,
       sourceUrl: null,
@@ -190,9 +178,7 @@ export const useStore = create<AppState>((set, get) => ({
       currentTime: 0,
       error: null,
       vinylLabelImage: null,
-      isExporting: false,
-      exportWidth: null,
-      exportHeight: null,
+      audioElement: null,
     }),
 
   getAvailablePresets: () => Object.values(PRESETS),
