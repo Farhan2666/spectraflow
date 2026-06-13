@@ -1,7 +1,8 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
 
-// ─── Primary: @distube/ytdl-core (direct YouTube extraction) ───
-// ─── Fallback: Piped API instances ─────────────────────────────────
+// ─── Method 1: @distube/ytdl-core (direct YouTube extraction) ───
+// ─── Method 2: Piped API instances ────────────────────────────────
+// ─── Method 3: Invidious API instances (most reliable) ────────────
 
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
@@ -21,52 +22,51 @@ const PIPED_INSTANCES = [
   'https://piped-api.codespace.cz',
 ];
 
+const INVIDIOUS_INSTANCES = [
+  'https://inv.thepixora.com',
+  'https://inv.nadeko.net',
+  'https://inv.tux.pizza',
+  'https://invidious.nerdvpn.de',
+  'https://iv.ggtyler.dev',
+  'https://invidious.privacydev.net',
+  'https://vid.puffyan.us',
+  'https://invidious.fdn.fr',
+];
+
 function extractVideoId(url: string): string | null {
   const match = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
   return match ? match[1] : null;
 }
 
+// ─── Method 1: ytdl-core ──────────────────────────────────────────
 async function tryYtdl(videoId: string): Promise<{ streamUrl: string; contentType: string } | null> {
   try {
-    // Dynamic import to avoid bundling issues
     const ytdl = await import('@distube/ytdl-core');
     const info = await ytdl.default.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
-
-    // Get best audio-only format
     const audioFormats = ytdl.default.filterFormats(info.formats, 'audioonly');
     if (audioFormats.length > 0) {
-      // Sort by bitrate, pick best
       const best = audioFormats.sort((a, b) => (b.audioBitrate || 0) - (a.audioBitrate || 0))[0];
       if (best.url) {
-        console.log(`[ytdl] Found audio format: ${best.mimeType}, bitrate: ${best.audioBitrate}`);
-        return {
-          streamUrl: best.url,
-          contentType: best.mimeType || 'audio/webm',
-        };
+        console.log(`[ytdl] Found: ${best.mimeType}, ${best.audioBitrate}kbps`);
+        return { streamUrl: best.url, contentType: best.mimeType || 'audio/webm' };
       }
     }
-
-    // Fallback: any format with audio
     const anyWithAudio = info.formats.filter(f => f.hasAudio);
     if (anyWithAudio.length > 0) {
       const best = anyWithAudio.sort((a, b) => (b.audioBitrate || 0) - (a.audioBitrate || 0))[0];
       if (best.url) {
-        console.log(`[ytdl] Fallback format: ${best.mimeType}, bitrate: ${best.audioBitrate}`);
-        return {
-          streamUrl: best.url,
-          contentType: best.mimeType || 'audio/mp4',
-        };
+        console.log(`[ytdl] Fallback: ${best.mimeType}, ${best.audioBitrate}kbps`);
+        return { streamUrl: best.url, contentType: best.mimeType || 'audio/mp4' };
       }
     }
-
-    console.log('[ytdl] No audio formats found');
     return null;
   } catch (err: any) {
-    console.error('[ytdl] Extraction failed:', err?.message || err);
+    console.error('[ytdl] Failed:', err?.message || err);
     return null;
   }
 }
 
+// ─── Method 2: Piped ──────────────────────────────────────────────
 async function tryPiped(videoId: string): Promise<{ streamUrl: string; contentType: string } | null> {
   for (const instance of PIPED_INSTANCES) {
     try {
@@ -75,27 +75,65 @@ async function tryPiped(videoId: string): Promise<{ streamUrl: string; contentTy
         headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
         signal: AbortSignal.timeout(8000),
       });
-
       if (!res.ok) continue;
-
       const data = await res.json();
-
       if (data.audioStreams && data.audioStreams.length > 0) {
-        const bestAudio = data.audioStreams.reduce((best: any, current: any) => {
-          return (current.bitrate || 0) > (best.bitrate || 0) ? current : best;
-        }, data.audioStreams[0]);
-        return { streamUrl: bestAudio.url, contentType: bestAudio.mimeType || 'audio/mp4' };
+        const best = data.audioStreams.reduce((best: any, cur: any) =>
+          (cur.bitrate || 0) > (best.bitrate || 0) ? cur : best, data.audioStreams[0]);
+        return { streamUrl: best.url, contentType: best.mimeType || 'audio/mp4' };
       }
-
       if (data.videoStreams && data.videoStreams.length > 0) {
         const muxed = data.videoStreams.find((v: any) => v.quality === '360p' && v.mimeType === 'video/mp4') ||
                       data.videoStreams.find((v: any) => v.mimeType === 'video/mp4');
-        if (muxed) {
-          return { streamUrl: muxed.url, contentType: muxed.mimeType || 'video/mp4' };
-        }
+        if (muxed) return { streamUrl: muxed.url, contentType: muxed.mimeType || 'video/mp4' };
       }
     } catch (err) {
-      console.error(`[Piped] ${instance} failed:`, err);
+      console.error(`[Piped] ${instance} failed`);
+    }
+  }
+  return null;
+}
+
+// ─── Method 3: Invidious ──────────────────────────────────────────
+async function tryInvidious(videoId: string): Promise<{ streamUrl: string; contentType: string } | null> {
+  for (const instance of INVIDIOUS_INSTANCES) {
+    try {
+      console.log(`[Invidious] Trying: ${instance}`);
+      const res = await fetch(`${instance}/api/v1/videos/${videoId}`, {
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) {
+        console.log(`[Invidious] ${instance} returned ${res.status}`);
+        continue;
+      }
+      const data = await res.json();
+      
+      // adaptiveFormats has separate audio/video streams
+      if (data.adaptiveFormats && data.adaptiveFormats.length > 0) {
+        const audioFormats = data.adaptiveFormats.filter((f: any) =>
+          f.type && f.type.includes('audio'));
+        if (audioFormats.length > 0) {
+          // Sort by bitrate, pick best
+          const best = audioFormats.sort((a: any, b: any) =>
+            (b.bitrate || 0) - (a.bitrate || 0))[0];
+          if (best.url) {
+            console.log(`[Invidious] ${instance}: ${best.type}, ${best.bitrate}bps`);
+            return { streamUrl: best.url, contentType: best.type || 'audio/mp4' };
+          }
+        }
+      }
+      
+      // Fallback: formatStreams (muxed video+audio)
+      if (data.formatStreams && data.formatStreams.length > 0) {
+        const best = data.formatStreams[0];
+        if (best.url) {
+          console.log(`[Invidious] ${instance}: muxed ${best.type}`);
+          return { streamUrl: best.url, contentType: best.type || 'video/mp4' };
+        }
+      }
+    } catch (err: any) {
+      console.error(`[Invidious] ${instance} failed:`, err?.message?.substring(0, 50));
     }
   }
   return null;
@@ -114,22 +152,28 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: 'Invalid YouTube URL' }, { status: 400 });
   }
 
-  // Try ytdl-core first (most reliable), then fall back to Piped
+  // Try all methods in order: ytdl → Invidious → Piped
   let result = await tryYtdl(videoId);
   if (!result) {
-    console.log('[proxy-audio] ytdl failed, trying Piped instances...');
+    console.log('[proxy] ytdl failed, trying Invidious...');
+    result = await tryInvidious(videoId);
+  }
+  if (!result) {
+    console.log('[proxy] Invidious failed, trying Piped...');
     result = await tryPiped(videoId);
   }
 
   if (!result) {
-    return NextResponse.json({ message: 'Could not extract audio stream from YouTube. All extraction methods failed.' }, { status: 502 });
+    return NextResponse.json({
+      message: 'Could not extract audio from YouTube. All extraction methods failed. Please try uploading the audio file directly.',
+    }, { status: 502 });
   }
 
   try {
     const streamResponse = await fetch(result.streamUrl);
 
     if (!streamResponse.ok || !streamResponse.body) {
-      return NextResponse.json({ message: 'Failed to fetch stream source' }, { status: 502 });
+      return NextResponse.json({ message: 'Failed to fetch audio stream' }, { status: 502 });
     }
 
     return new Response(streamResponse.body, {
