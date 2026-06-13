@@ -1,10 +1,21 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
 
 const PIPED_INSTANCES = [
-  'https://api.piped.private.coffee',
-  'https://piped-api.codespace.cz',
-  'https://pipedapi.ducks.party',
-  'https://pipedapi.owo.si',
+  'https://pipedapi.kavin.rocks',          // Official (US/IN/NL/CA/GB/FR CDN)
+  'https://pipedapi-libre.kavin.rocks',    // Official libre (NL)
+  'https://pipedapi.leptons.xyz',          // AT, CDN
+  'https://pipedapi.nosebs.ru',            // FI, CDN
+  'https://piped-api.privacy.com.de',      // DE
+  'https://pipedapi.adminforge.de',        // DE
+  'https://api.piped.yt',                  // DE
+  'https://pipedapi.drgns.space',          // US
+  'https://pipedapi.reallyaweso.me',       // DE
+  'https://pipedapi.darkness.services',    // US
+  'https://pipedapi.orangenet.cc',         // SI
+  'https://api.piped.private.coffee',      // AT
+  'https://pipedapi.owo.si',               // DE
+  'https://pipedapi.ducks.party',          // NL
+  'https://piped-api.codespace.cz',        // CZ
 ];
 
 function extractVideoId(url: string): string | null {
@@ -33,7 +44,7 @@ export async function GET(request: NextRequest) {
       console.log(`Trying Piped instance: ${instance} for video: ${videoId}`);
       const res = await fetch(`${instance}/streams/${videoId}`, {
         headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        next: { revalidate: 3600 },
+        signal: AbortSignal.timeout(8000), // 8s timeout per instance
       });
 
       if (!res.ok) continue;
