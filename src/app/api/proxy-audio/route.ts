@@ -1,8 +1,11 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
 
-// ─── Method 1: @distube/ytdl-core (direct YouTube extraction) ───
-// ─── Method 2: Piped API instances ────────────────────────────────
-// ─── Method 3: Invidious API instances (most reliable) ────────────
+// Vercel serverless timeout (Pro plan: up to 60s, Hobby: 10s)
+export const maxDuration = 60;
+
+// ─── Method 1: Invidious API (most reliable) ─────────────────────
+// ─── Method 2: @distube/ytdl-core (fast but often blocked) ───────
+// ─── Method 3: Piped API instances ───────────────────────────────
 
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
@@ -152,14 +155,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: 'Invalid YouTube URL' }, { status: 400 });
   }
 
-  // Try all methods in order: ytdl → Invidious → Piped
-  let result = await tryYtdl(videoId);
+  // Try Invidious first (most reliable), then ytdl, then Piped
+  let result = await tryInvidious(videoId);
   if (!result) {
-    console.log('[proxy] ytdl failed, trying Invidious...');
-    result = await tryInvidious(videoId);
+    console.log('[proxy] Invidious failed, trying ytdl...');
+    result = await tryYtdl(videoId);
   }
   if (!result) {
-    console.log('[proxy] Invidious failed, trying Piped...');
+    console.log('[proxy] ytdl failed, trying Piped...');
     result = await tryPiped(videoId);
   }
 
